@@ -25,7 +25,28 @@ Fetched for real via EDGAR's own Fair Access-compliant API (`data.sec.gov`, iden
 - **Model choice materially changes schema quality**: `qwen2.5:3b` initially proposed field names that were raw, unedited table header text (e.g. `"1. Title of Security (Instr. 3)"`) - technically valid JSON, but useless as real field names. `qwen2.5-coder:14b` produced clean, human-usable names (`"Security Type"`, `"Transaction Date"`). This is exactly the comparison issue #4 (model evaluation) exists to make systematic, not anecdotal.
 - **A real bug found and fixed**: the first version of `_strip_code_fence` didn't handle a model adding prose *after* the closing markdown fence (`"...\`\`\`\n\nThis script assumes..."`) - left the fence and trailing prose glued onto the executable code, causing real syntax errors. Fixed; regression test added (`tests/test_codegen.py`).
 - **A real design gap found and fixed**: the schema alone doesn't tell codegen *which* of 14-17 tables in a real document is the target - codegen was blindly guessing. Added `table_anchor_text` (a literal snippet from the target table's own header/title, since a raw table *index* isn't stable across documents in the same group when boilerplate table counts differ slightly).
-- **Real extraction still doesn't reliably work end-to-end yet**, even with the anchor fix: Form 4's real table has THREE header-like rows (a merged title row, a numbered-label row, an abbreviated-label row) before real data starts. Generated code routinely fails to distinguish "header row" from "data row" correctly, or has ordinary bugs (one generated script called `re.match` without `import re` - a real `NameError`, correctly caught by the validation/retry loop, just not always successfully self-corrected within the attempt budget). This is the single biggest open problem - see "Known limitations."
+- **Real extraction still doesn't reliably work end-to-end yet**, even with the anchor fix: Form 4's real table has THREE header-like rows (a merged title row, a numbered-label row, an abbreviated-label row) before real data starts. Generated code routinely fails to distinguish "header row" from "data row" correctly, or has ordinary bugs (one generated script called `re.match` without `import re` - a real `NameError`, correctly caught by the validation/retry loop, just not always successfully self-corrected within the attempt budget). This is the single biggest open problem on EDGAR - see below for a case where it *does* fully work.
+
+## Real test 2: Manitoba government weekly crop reports (74 real PDFs) - full success
+
+A second, very different real domain: 74 real weekly crop condition PDFs from Manitoba Agriculture (`gov.mb.ca`), fetched directly (public government open data - no scraping/ToS concern, unlike the Amazon case). Converted to real Docling JSON the same way (`data/docling_json/mb_crop_reports/`).
+
+This domain's tables turned out to be much cleaner than EDGAR's (a single real header row, not three) - and it's what finally validated the **real generalization test** the sibling issues actually ask for: does ONE generated script, written once against ONE document, correctly extract from every *other* document in the group with no regeneration. Added as `pipeline.run_pipeline_shared_script` (`run_pipeline.py --shared-script`) after the per-document mode's results turned out to be a weaker, more misleading signal (see below).
+
+**Real result: 7/7 generalization**, against a group of 8 real weekly reports (2026-08-05 through 2026-09-22), for the "wettest/driest location per region" table:
+
+```
+[training] crop-report-2026-08-05.json - 5 rows
+  {"Region": "Central", "Wettest location last seven days": "Starbuck (16.5 mm)", "Driest location last seven days": "Cartwright, Clearwater (0 mm)"}
+[generalization test] crop-report-2026-09-22.json - 5 rows
+  {"Region": "Central", "Wettest location last seven days": "Plumas (41.6 mm)", "Driest location last seven days": "Morden (9.1 mm)"}
+```
+
+Every one of the 7 non-training documents returned real, genuinely different data (different real station names, different real precipitation figures each week) using the exact same unmodified script - this is the strongest real evidence in this repo so far that the core approach works, given a table shape that isn't pathologically nested.
+
+**A real, honest nondeterminism finding along the way**: running schema detection twice against the identical 8-document group, same model, produced two *different* valid schemas - once picking the "crop condition % by region" table, once the "wettest/driest location" table, and a third early run picked "Region Weather Data" with a schema that failed to generalize at all (`table_anchor_text: "Region"` was too generic - it matched a header cell in more than one table, and codegen's per-document guess varied run to run). This is a real reliability gap for #4's eval work, not a one-off: schema-detection variance directly determines whether the codegen stage even has a fair shot at succeeding.
+
+**A real architecture fix this exposed**: the original `run_pipeline` generated an *independent* script per document - each success was really "codegen got lucky once," not evidence anything generalized. `run_pipeline_shared_script` is the real test; keeping both modes since the per-document one still surfaces useful reliability data.
 
 ## Known limitations (honest, not hidden)
 
