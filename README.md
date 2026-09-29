@@ -1,8 +1,8 @@
-# docuzent-etl (private prototype)
+# docuzent-etl
 
 An LLM-driven pipeline: given a **group** of related documents (already parsed by Docling into JSON), detect the valuable structured tables that appear consistently across the group, propose one JSON schema that fits all of them, then generate, execute, and validate Python extraction code against that schema - with a real retry loop when the model's own output is malformed.
 
-This is a **prototype for a working ETL system**, kept private. It is not part of the public [`docuzent`](https://github.com/no-mans-code/docuzent) repo - it reuses the idea of shelling out to Docling but has its own codebase, since the actual work here (LLM-driven schema inference, generated-code execution, financial-data extraction) is a different problem from that repo's document Q&A tool.
+This is a **prototype for a working ETL system**. It is not part of the [`docuzent`](https://github.com/no-mans-code/docuzent) repo - it reuses the idea of shelling out to Docling but has its own codebase, since the actual work here (LLM-driven schema inference, generated-code execution, structured data extraction) is a different problem from that repo's document Q&A tool.
 
 ## Status: real, working POC - not production-hardened
 
@@ -72,7 +72,7 @@ Real testing above already established the core driver of success: does the docu
 
 ## Concept/schema drift
 
-Direct framing from this prototype's purpose (financial/hedge-fund-relevant data extraction): a document group's real structure can drift over time - a filing's line items change between fiscal years, a company changes its Form 4 layout, a product category gains new spec fields. A schema (and the code generated against it) built from one snapshot of a group can silently degrade in correctness as new documents diverge from that snapshot, rather than failing loudly. For a use case where the extracted data feeds financial decisions, "silently wrong structured data" is a materially worse failure mode than "visibly broken."
+Direct framing from this prototype's purpose (financial data extraction): a document group's real structure can drift over time - a filing's line items change between fiscal years, a company changes its Form 4 layout, a product category gains new spec fields. A schema (and the code generated against it) built from one snapshot of a group can silently degrade in correctness as new documents diverge from that snapshot, rather than failing loudly. For a use case where the extracted data feeds financial decisions, "silently wrong structured data" is a materially worse failure mode than "visibly broken."
 
 **Deliberately not solved in this pass** (explicit instruction: build the POC first, deal with drift later). Real future work this points to:
 - Schema versioning - detect when a new document's tables no longer match a previously-accepted schema, rather than forcing a fit.
