@@ -75,13 +75,34 @@ def run_pipeline(host: str, model: str, docling_json_paths: list[Path], log_path
     return result
 
 
+def _pick_training_document(docling_json_paths: list[Path], anchor_text: str) -> tuple[Path, list[Path]]:
+    """Real bug found during testing: schema detection looks across the
+    WHOLE group to propose a schema, but not every document in a group
+    necessarily contains that table (e.g. a weekly report series where
+    an early-season report has no crop-condition table yet, only a
+    weather table). Blindly training codegen against
+    `docling_json_paths[0]` can pick a document that structurally can't
+    have real rows - not a codegen failure, a document-selection one.
+    This picks the first document (in the given order) that
+    `_find_anchor_table` confirms actually contains the target table,
+    falling back to the literal first document if none do (so codegen
+    still gets a real, honest "this table doesn't exist" signal rather
+    than silently skipping training)."""
+    for path in docling_json_paths:
+        if codegen._find_anchor_table(path, anchor_text) is not None:  # noqa: SLF001 - intentional reuse
+            rest = [p for p in docling_json_paths if p != path]
+            return path, rest
+    return docling_json_paths[0], docling_json_paths[1:]
+
+
 def run_pipeline_shared_script(host: str, model: str, docling_json_paths: list[Path], log_path: Path | None = None) -> dict:
     """The real generalization test: detect a schema, generate+validate
-    ONE script against the first document, then run that *exact same*
-    script (no regeneration, no per-document LLM calls) against every
-    other document in the group. Reports, per document, whether the
-    shared script found real rows - this is what "does it generalize"
-    actually means, not "did codegen succeed independently N times."
+    ONE script against a document confirmed to actually contain the
+    target table, then run that *exact same* script (no regeneration,
+    no per-document LLM calls) against every other document in the
+    group. Reports, per document, whether the shared script found real
+    rows - this is what "does it generalize" actually means, not "did
+    codegen succeed independently N times."
     """
     t0 = time.time()
     schema_result = schema_detect.detect_schema(host, model, docling_json_paths)
@@ -92,7 +113,7 @@ def run_pipeline_shared_script(host: str, model: str, docling_json_paths: list[P
         return result
 
     schema = schema_result.schema
-    training_doc, *rest_docs = docling_json_paths
+    training_doc, rest_docs = _pick_training_document(docling_json_paths, schema.table_anchor_text)
     codegen_result = codegen.generate_and_validate(host, model, schema, training_doc)
 
     per_document = [
