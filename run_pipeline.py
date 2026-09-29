@@ -16,7 +16,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
+from docuzent_etl import context_sizing  # noqa: E402
+from docuzent_etl.docling_json import load_group_tables  # noqa: E402
 from docuzent_etl.pipeline import run_pipeline, run_pipeline_shared_script  # noqa: E402
+from docuzent_etl.schema_detect import _build_prompt as _build_schema_detect_prompt  # noqa: E402
 
 
 def _print_per_document(result: dict, shared: bool) -> None:
@@ -44,6 +47,12 @@ def main() -> None:
         action="store_true",
         help="Generate ONE script against the first document and apply it, unmodified, to every other document - the real generalization test.",
     )
+    parser.add_argument(
+        "--auto-model",
+        action="store_true",
+        help="Measure the real token requirement for this document group first, then pick a local model whose real trained "
+        "context fits it (smallest that fits; largest available + a warning if none fit). Overrides --model. See issue #7.",
+    )
     args = parser.parse_args()
 
     paths = [Path(p) for p in args.documents]
@@ -52,13 +61,29 @@ def main() -> None:
             print(f"error: {p} does not exist", file=sys.stderr)
             sys.exit(1)
 
+    model = args.model
+    if args.auto_model:
+        group_tables = load_group_tables(paths)
+        prompt = _build_schema_detect_prompt(group_tables)
+        required_tokens = context_sizing.estimate_required_tokens(prompt)
+        print(f"Estimated real token requirement for this document group's schema-detection prompt: ~{required_tokens:,} tokens")
+
+        selection = context_sizing.pick_model_for_tokens(required_tokens, args.host)
+        model = selection.model.name
+        fit_note = "fits comfortably" if selection.fits else "does NOT fully fit"
+        print(f"Selected model: {model} (real trained context {selection.model.trained_context_length:,} tokens, {fit_note})")
+        if selection.warning:
+            print(f"WARNING: {selection.warning}")
+        if selection.ram_offload_warning:
+            print(f"WARNING: {selection.ram_offload_warning}")
+
     mode = "shared-script (generate once, apply to the group)" if args.shared_script else "per-document codegen"
-    print(f"Running [{mode}] for model={args.model} over {len(paths)} document(s)...")
+    print(f"Running [{mode}] for model={model} over {len(paths)} document(s)...")
 
     if args.shared_script:
-        result = run_pipeline_shared_script(args.host, args.model, paths, log_path=Path(args.log))
+        result = run_pipeline_shared_script(args.host, model, paths, log_path=Path(args.log))
     else:
-        result = run_pipeline(args.host, args.model, paths, log_path=Path(args.log))
+        result = run_pipeline(args.host, model, paths, log_path=Path(args.log))
 
     print(f"\nSchema detection: {'OK' if result['schema_succeeded'] else 'FAILED'}")
     if result["schema"]:

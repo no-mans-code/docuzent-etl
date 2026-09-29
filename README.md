@@ -48,6 +48,19 @@ Every one of the 7 non-training documents returned real, genuinely different dat
 
 **A real architecture fix this exposed**: the original `run_pipeline` generated an *independent* script per document - each success was really "codegen got lucky once," not evidence anything generalized. `run_pipeline_shared_script` is the real test; keeping both modes since the per-document one still surfaces useful reliability data.
 
+## Auto model selection: measure real token requirement, pick a model that actually fits
+
+Real testing above already established the core driver of success: does the document group's real content fit in the model's real context. `docuzent_etl.context_sizing` (issue #7) measures this directly rather than leaving model choice to a guess:
+
+1. Estimates the real token requirement for the document group's schema-detection prompt (chars/4 + overhead margin - same estimate the sibling `docuzent` Rust project uses, for the same reason: Ollama exposes no tokenizer endpoint).
+2. Queries every locally pulled model's real GGUF architecture metadata and picks the smallest one whose **real trained context** (not nominal) comfortably holds that requirement - ported directly from the sibling project's own `docuzent_core::vram`, reusing the exact validated KV-cache-bytes-per-token formula rather than re-deriving it.
+3. If nothing fits: warns clearly and proceeds with the largest available model anyway - best effort, never a hard failure.
+4. Checks real free VRAM and warns if the selection will spill into system RAM - but never shrinks the context to avoid this. This is a deliberate, different tradeoff from the sibling project's own default: there, capping context to fit VRAM is the right call for a fast, general-purpose tool; here, real testing shows accuracy tracks content fitting in context, so RAM offload (slower, not wrong) is accepted rather than truncating the content.
+
+`python run_pipeline.py --auto-model --shared-script data/docling_json/mb_crop_reports/*.json`
+
+**A real, interesting finding surfaced immediately**: `gpt-oss:20b` reports a nominal `context_length` of 131,072 but a real trained `rope.scaling.original_context_length` of only 4,096 - the *opposite* direction from `devstral-small-2:24b` (nominal 393,216, trained 8,192, found earlier), but the exact same underlying trap. Auto-selection correctly preferred the real trained value in both directions and picked accordingly. The RAM-offload warning fired correctly and did not block the run, exactly as designed.
+
 ## Known limitations (honest, not hidden)
 
 - **Real-world multi-header-row tables are the current bottleneck.** Codegen's prompt now explicitly warns about this, but doesn't reliably solve it yet - a real, unsolved problem, not a documented-and-fixed one.
